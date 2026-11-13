@@ -2,6 +2,24 @@
 """Django's command-line utility for administrative tasks."""
 import os
 import sys
+import types
+from pathlib import Path
+
+_CURRENT_DIR = Path(__file__).resolve().parent
+_PARENT_DIR = _CURRENT_DIR.parent
+
+if (_PARENT_DIR / 'backend_django').is_dir():
+    if str(_PARENT_DIR) not in sys.path:
+        sys.path.insert(0, str(_PARENT_DIR))
+else:
+    if str(_CURRENT_DIR) not in sys.path:
+        sys.path.insert(0, str(_CURRENT_DIR))
+    if 'backend_django' not in sys.modules:
+        _pkg = types.ModuleType('backend_django')
+        _pkg.__path__ = [str(_CURRENT_DIR)]
+        _pkg.__file__ = str(_CURRENT_DIR / '__init__.py')
+        sys.modules['backend_django'] = _pkg
+
 
 def main():
     """Run administrative tasks."""
@@ -15,6 +33,7 @@ def main():
             "forget to activate a virtual environment?"
         ) from exc
     execute_from_command_line(sys.argv)
+
 
 if __name__ == '__main__':
     main()
