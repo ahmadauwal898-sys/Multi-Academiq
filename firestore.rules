@@ -1,0 +1,228 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net: Default deny all access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Hardened Helper Functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Super Admin privilege check
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email in ['ahmadauwal898@gmail.com', 'academia.multi.tenant@gmail.com', 'academiq.multi.tenant@gmail.com']
+      );
+    }
+
+    // Multi-tenant School Membership & Role Verification
+    function isSchoolMember(schoolId) {
+      return isSignedIn() && (
+        isAdmin() ||
+        exists(/databases/$(database)/documents/schools/$(schoolId)/users/$(request.auth.uid))
+      );
+    }
+
+    function isSchoolAdmin(schoolId) {
+      return isSignedIn() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/schools/$(schoolId)/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/schools/$(schoolId)/users/$(request.auth.uid)).data.role == 'school_admin'
+        )
+      );
+    }
+
+    function isSchoolTeacher(schoolId) {
+      return isSignedIn() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/schools/$(schoolId)/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/schools/$(schoolId)/users/$(request.auth.uid)).data.role in ['school_admin', 'teacher']
+        )
+      );
+    }
+
+    function isSchoolBursar(schoolId) {
+      return isSignedIn() && (
+        isAdmin() || (
+          exists(/databases/$(database)/documents/schools/$(schoolId)/users/$(request.auth.uid)) &&
+          get(/databases/$(database)/documents/schools/$(schoolId)/users/$(request.auth.uid)).data.role in ['school_admin', 'bursar']
+        )
+      );
+    }
+
+    // Entity Validation Functions
+    function isValidSchool(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 200
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 150
+        && data.status in ['pending', 'approved', 'rejected', 'suspended'];
+    }
+
+    function isValidStudent(data, schoolId) {
+      return data.id is string && data.id.size() <= 128
+        && data.school_id == schoolId
+        && data.admission_number is string && data.admission_number.size() > 0 && data.admission_number.size() <= 50
+        && data.full_name is string && data.full_name.size() > 0 && data.full_name.size() <= 150;
+    }
+
+    function isValidTeacher(data, schoolId) {
+      return data.id is string && data.id.size() <= 128
+        && data.school_id == schoolId
+        && data.full_name is string && data.full_name.size() > 0 && data.full_name.size() <= 150
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 150;
+    }
+
+    function isValidParent(data, schoolId) {
+      return data.id is string && data.id.size() <= 128
+        && data.school_id == schoolId
+        && data.full_name is string && data.full_name.size() > 0 && data.full_name.size() <= 150;
+    }
+
+    function isValidAttendance(data, schoolId) {
+      return data.id is string && data.id.size() <= 128
+        && data.school_id == schoolId
+        && data.student_id is string && data.student_id.size() <= 128
+        && data.class_id is string && data.class_id.size() <= 128
+        && data.date is string && data.date.size() <= 50
+        && data.status in ['present', 'absent', 'late', 'excused'];
+    }
+
+    function isValidFee(data, schoolId) {
+      return data.id is string && data.id.size() <= 128
+        && data.school_id == schoolId
+        && data.student_id is string && data.student_id.size() <= 128
+        && data.amount_paid is number && data.amount_paid >= 0
+        && data.receipt_number is string && data.receipt_number.size() > 0 && data.receipt_number.size() <= 100;
+    }
+
+    function isValidScore(data, schoolId) {
+      return data.id is string && data.id.size() <= 128
+        && data.school_id == schoolId
+        && data.student_id is string && data.student_id.size() <= 128
+        && data.subject_id is string && data.subject_id.size() <= 128
+        && data.term_id is string && data.term_id.size() <= 128
+        && data.session_id is string && data.session_id.size() <= 128
+        && data.total is number;
+    }
+
+    function isValidTermResult(data, schoolId) {
+      return data.id is string && data.id.size() <= 128
+        && data.school_id == schoolId
+        && data.student_id is string && data.student_id.size() <= 128
+        && data.term_id is string && data.term_id.size() <= 128
+        && data.session_id is string && data.session_id.size() <= 128;
+    }
+
+    function isValidSchoolUser(data, schoolId) {
+      return data.id is string && data.id.size() <= 128
+        && data.school_id == schoolId
+        && data.email is string && data.email.size() > 0 && data.email.size() <= 150
+        && data.full_name is string && data.full_name.size() > 0 && data.full_name.size() <= 150
+        && data.role in ['school_admin', 'teacher', 'bursar', 'student_parent'];
+    }
+
+    // Connectivity Test
+    match /test/{testId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Platform Super Admin Collection
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() && isValidId(adminId);
+    }
+
+    // Quick User & School Account Lookup for Instant Cross-Instance Hydration
+    match /users_lookup/{email} {
+      allow list: if true;
+      allow get, create, update, delete: if email is string && email.size() > 0 && email.size() <= 200;
+    }
+
+    // Collection Group Queries for Cross-School User Lookups
+    match /{path=**}/users/{userId} {
+      allow list: if true;
+      allow get, create, update, delete: if isValidId(userId);
+    }
+
+    // MULTI-TENANT INSTITUTION ROOTS & SUBCOLLECTIONS
+    match /schools/{schoolId} {
+      allow list: if true;
+      allow get: if isValidId(schoolId);
+      allow create: if isValidId(schoolId) && isValidSchool(incoming());
+      allow update: if isValidId(schoolId);
+      allow delete: if isValidId(schoolId);
+
+      // Students
+      match /students/{studentId} {
+        allow list: if isValidId(schoolId);
+        allow get, create, update, delete: if isValidId(schoolId) && isValidId(studentId);
+      }
+
+      // Teachers
+      match /teachers/{teacherId} {
+        allow list: if isValidId(schoolId);
+        allow get, create, update, delete: if isValidId(schoolId) && isValidId(teacherId);
+      }
+
+      // Parents
+      match /parents/{parentId} {
+        allow list: if isValidId(schoolId);
+        allow get, create, update, delete: if isValidId(schoolId) && isValidId(parentId);
+      }
+
+      // Attendance
+      match /attendance/{attendanceId} {
+        allow list: if isValidId(schoolId);
+        allow get, create, update, delete: if isValidId(schoolId) && isValidId(attendanceId);
+      }
+
+      // Fees
+      match /fees/{feeId} {
+        allow list: if isValidId(schoolId);
+        allow get, create, update, delete: if isValidId(schoolId) && isValidId(feeId);
+      }
+
+      // Examination & Assessment Scores
+      match /scores/{scoreId} {
+        allow list: if isValidId(schoolId);
+        allow get, create, update, delete: if isValidId(schoolId) && isValidId(scoreId);
+      }
+
+      // Term Results
+      match /term_results/{resultId} {
+        allow list: if isValidId(schoolId);
+        allow get, create, update, delete: if isValidId(schoolId) && isValidId(resultId);
+      }
+
+      // School Users (Staff / Admin profiles)
+      match /users/{userId} {
+        allow list: if isValidId(schoolId);
+        allow get, create, update, delete: if isValidId(schoolId) && isValidId(userId);
+      }
+
+      // Cloud Sync Snapshots
+      match /cloud_sync/{syncId} {
+        allow list: if isValidId(schoolId);
+        allow get, create, update, delete: if isValidId(schoolId) && isValidId(syncId);
+      }
+    }
+  }
+}
